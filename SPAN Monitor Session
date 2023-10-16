@@ -1,0 +1,270 @@
+########################################################################################################################
+#
+#TOPOLOGY :
+#                    ____________       
+#                   |            |   
+#                   |            |-----Destination Port     
+#                   |            |
+#                   | N9K Switch |    
+#                   |            |
+#   Source Port-----|            |     
+#                   |____________|     
+#
+########################################################################################################################
+from ats import tcl
+from ats import aetest
+from ats.log.utils import banner
+import time
+import logging
+import os
+import sys
+import re
+import pdb
+import json
+import pprint
+import socket
+import struct
+import inspect
+import CSCwe37750_lib as buglib
+#from buglib import *
+#import nxos.lib.nxos.util as util
+#import ctsPortRoutines
+#import pexpect
+#import nxos.lib.common.topo as topo
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+global uut1           
+global uut1_intf1, uut1_intf2
+
+global s,v
+s = 2 #Monitor Session 
+v = 3 #Vlan Filter
+
+class ForkedPdb(pdb.Pdb):
+    '''A Pdb subclass that may be used
+    from a forked multiprocessing child1
+    '''
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+################################################################################
+####                       COMMON SETUP SECTION                             ####
+################################################################################
+class common_setup(aetest.CommonSetup):
+    @aetest.subsection
+    def Span_topo_parse(self,testscript,testbed,R1):
+        global uut1
+        global uut1_intf1, uut1_intf2
+
+        global uut_m
+
+        global custom
+        custom = testbed.custom
+
+        uut1=testbed.devices[R1]
+        uut_list=[uut1]
+
+        router_list = [R1]
+        
+        uut1_intf1 = uut1.interfaces['uut1_intf1'].intf
+        uut1_intf2 = uut1.interfaces['uut1_intf2'].intf
+        
+        log.info("uut1_intf1 = %s" %uut1_intf1)
+        log.info("uut1_intf2 = %s" %uut1_intf2)
+        
+    @aetest.subsection
+    def connect_to_devices(self,testscript,testbed,R1):
+        global uut1
+        uut1=testbed.devices[R1]
+
+        
+        log.info("Connecting to Device...")
+        log.info("%s"%uut1.name)
+        try:
+            uut1.connect()
+            log.info("Connection to %s Successful..."%uut1.name)
+        except Exception as e:
+            log.error("Connection to %s Unsuccessful "\
+                      "Exiting error:%s"%(uut1.name,e))
+            self.failed(goto=['exit'])
+ 
+################################################################################
+###                          TESTCASE BLOCK                                  ###
+################################################################################
+
+
+###############################################################################################
+# Test case 1 :                                                                               #
+###############################################################################################
+
+class Span_config(aetest.Testcase):
+    
+    @aetest.test
+    def basic(self):
+        log.info("Collecting internal build version...")
+        
+        cmd = """sh version internal build-identifier"""
+        uut1.execute(cmd)
+        
+        log.info(f"Creating a vlan {v}")
+         
+        cmd = """vlan %s"""%(v)
+        uut1.configure(cmd)
+        
+###############################################################################################
+    @aetest.test
+    def test_L2(self):
+      
+        log.info(("Configuration of {0} and {1}").format(uut1_intf1,uut1_intf2))
+         
+        buglib.L2_intf(uut1_intf1,uut1_intf2,uut1)
+            
+        buglib.SnD_ports(s,uut1_intf1,uut1_intf2,v,uut1)
+    
+        #buglib.swi_mon(uut1_intf2,uut1)        
+    
+    @aetest.test
+    def run_conf_check_L2(self):
+        
+        log.info("CHECKING THE RUNNING CONFIGS OF MONITOR SESSION...")
+         
+        Output = buglib.run_conf(s,uut1)
+        
+        k = ((f"monitor session {s}"))
+        
+        if k in Output:
+            m = (("source interface Ethernet {0} both").format(uut1_intf1))
+            
+            if m in Output:
+                n = (("destination interface Ethernet {1}").format(uut1_intf2))
+                
+                if n in Output:
+                    l = ((f"filter vlan {v}"))
+            
+                    if l in Output:
+                        
+                        if "no shut" in Output:
+                            log.info("PASSED")
+        else:    
+            log.error("##########_____Fail_____##########")
+            self.failed()
+            
+    @aetest.test
+    def status_in_L2(self):
+        
+        log.info("CHECKING THE STATUS OF MONITOR SESSION...")
+         
+        Output = buglib.mon_sess(uut1_intf1,uut1_intf2,s,uut1)
+        if "down" in Output:
+            log.error("##########_____Fail_____##########")
+            self.failed()
+            
+    @aetest.test
+    def CC_check_L2(self):
+        
+        log.info("CONSISTENCY CHECKER...")
+         
+        Output = buglib.consis_check(s,uut1)
+        if "FAILED" in Output:
+            log.error("##########_____Fail_____##########")
+            self.failed()
+        else:
+            log.info("PASSED")        
+###############################################################################################
+    
+###############################################################################################
+# Test case 2 :                                                                               #
+###############################################################################################
+    @aetest.test
+    def test_L3(self):
+      
+        log.info(("Configuring {0} and {1}").format(uut1_intf1,uut1_intf2))
+        
+        buglib.L3_intf(uut1_intf1,uut1_intf2,uut1)
+        
+        buglib.SnD_ports(s,uut1_intf1,uut1_intf2,v,uut1)
+        
+        # buglib.swi_mon(uut1_intf2,uut1)
+                
+    @aetest.test
+    def run_conf_check_L3(self):
+        
+        log.info("CHECKING THE RUNNING CONFIGS OF MONITOR SESSION...")
+         
+        Output = buglib.run_conf(s,uut1)
+        
+        k = ((f"monitor session {s}"))
+        
+        if k in Output:
+            m = (("source interface Ethernet {0} both").format(uut1_intf1))
+            
+            if m in Output:
+                n = (("destination interface Ethernet {1}").format(uut1_intf2))
+                
+                if n in Output:
+                    l = ((f"filter vlan {v}"))
+            
+                    if l in Output:
+                        
+                        if "no shut" in Output:
+                            log.info("PASSED")
+        else:    
+            log.error("##########_____Fail_____##########")
+            self.failed()
+            
+    @aetest.test
+    def status_in_L3(self):
+        
+        log.info("CHECKING THE STATUS OF MONITOR SESSION...")
+         
+        Output = buglib.mon_sess(uut1_intf1,uut1_intf2,s,uut1)
+        if "down" in Output:
+            log.error("##########_____Fail_____##########")
+            self.failed()
+            
+    @aetest.test
+    def CC_check_L3(self):
+        
+        log.info("CONSISTENCY CHECKER...")
+         
+        Output = buglib.consis_check(s,uut1)
+        if "FAILED" in Output:
+            log.error("##########_____Fail_____##########")
+            self.failed()
+        else:
+            log.info("PASSED")
+###############################################################################################            
+    @aetest.test
+    def removing(self):
+        cmd = """no monitor session %s
+              """%(s)
+        uut1.configure(cmd)
+        
+        cmd = """no vlan %s
+              """%(v)
+        uut1.configure(cmd)      
+        
+################################################################################           
+        
+################################################################################
+####                       COMMON CLEANUP SECTION                           ####
+################################################################################
+        
+class CommonCleanup(aetest.CommonCleanup):
+    if __name__ == '__main__': 
+        import argparse
+        from ats import topology
+        parser = argparse.ArgumentParser(description='standalone parser')
+        parser.add_argument('--testbed', dest='testbed', type=topology.loader.load)
+        parser.add_argument('--R1', dest='R1', type=str)
+        parser.add_argument('--mode',dest = 'mode',type = str)
+        args = parser.parse_known_args()[0]
+        aetest.main(testbed=args.testbed,
+                R1_name=args.R1,
+                mode = args.mode,
+                pdb = True)                        
